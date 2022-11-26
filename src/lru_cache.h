@@ -80,7 +80,7 @@ protected:
     void write_pages(set<int>& pages_to_write) {
         for (set<int>::iterator it = pages_to_write.begin(); it != pages_to_write.end(); it++) {
             uint8_t *block = &page_cache[page_size * disk_to_cache_map[*it]->cache_loc];
-            block[0] &= 0xFD; // unchange it
+            block[0] &= 0xBF; // unchange it
             off_t file_pos = page_size;
             file_pos *= *it;
             write_page(block, file_pos, page_size);
@@ -109,7 +109,7 @@ protected:
         do {
             uint8_t *block = &page_cache[cur_entry->cache_loc * page_size];
             if (block_to_keep != block) {
-              if (block[0] & 0x02) // is it changed
+              if (block[0] & 0x40) // is it changed
                 pages_to_write.insert(cur_entry->disk_page);
               if (pages_to_write.size() > (stats.last_pages_to_flush + new_pages.size()))
                 break;
@@ -202,7 +202,7 @@ public:
         set<int> pages_to_write;
         for (unordered_map<int, dbl_lnklst*>::iterator it = disk_to_cache_map.begin(); it != disk_to_cache_map.end(); it++) {
             uint8_t *block = &page_cache[page_size * it->second->cache_loc];
-            if (block[0] & 0x02) // is it changed
+            if (block[0] & 0x40) // is it changed
                 pages_to_write.insert(it->first);
         }
         write_pages(pages_to_write);
@@ -257,19 +257,19 @@ public:
                   int check_count = 10; // last_pages_to_flush * 2;
                   while (check_count--) { // find block which is not changed
                     block = &page_cache[entry_to_move->cache_loc * page_size];
-                    if ((block[0] & 0x02) == 0x00 && block_to_keep != block)
+                    if ((block[0] & 0x40) == 0x00 && block_to_keep != block)
                       break;
                     if (entry_to_move->prev == NULL)
                       break;
                     entry_to_move = entry_to_move->prev;
                   }
-                  if ((block[0] & 0x02) || new_pages.size() > stats.last_pages_to_flush
+                  if ((block[0] & 0x40) || new_pages.size() > stats.last_pages_to_flush
                              || new_pages.find(disk_page) != new_pages.end())
                     flush_pages_in_seq(block_to_keep);
-                } while (block[0] & 0x02);
+                } while (block[0] & 0x40);
                 lnklst_last_free = entry_to_move->prev;
-                    //if (block[0] & 0x02) {
-                    //  block[0] &= 0xFD; // unchange it
+                    //if (block[0] & 0x40) {
+                    //  block[0] &= 0xBF; // unchange it
                     //  write_page(block, entry_to_move->disk_page * page_size, page_size);
                     //  fflush(fp);
                     //}
@@ -323,10 +323,10 @@ public:
             flush_pages_in_seq(block_to_keep);
         uint8_t *new_page = get_disk_page_in_cache(file_page_count, block_to_keep, true);
         new_pages.insert(file_page_count);
-            //new_page[0] &= 0xFD; // unchange it
+            //new_page[0] &= 0xBF; // unchange it
             //write_page(new_page, file_page_count * page_size, page_size, true);
             //fflush(fp);
-            //new_page[0] |= 0x02; // change it
+            //new_page[0] |= 0x40; // change it
             //printf("file_page_count:%ld\n", file_page_count);
         file_page_count++;
         return new_page;

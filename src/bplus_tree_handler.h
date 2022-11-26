@@ -14,13 +14,19 @@
 
 using namespace std;
 
-#define BPT_IS_LEAF_BYTE current_block[0] & 0x01
+#define BPT_IS_LEAF_BYTE current_block[0] & 0x80
+#define BPT_IS_CHANGED current_block[0] & 0x40
+#define BPT_LEVEL (current_block[0] & 0x1F)
 #define BPT_FILLED_SIZE current_block + 1
 #define BPT_LAST_DATA_PTR current_block + 3
 #define BPT_MAX_KEY_LEN current_block[5]
 #define BPT_TRIE_LEN_PTR current_block + 6
 #define BPT_TRIE_LEN current_block[7]
 #define BPT_MAX_PFX_LEN current_block[8]
+
+#define BPT_LEAF0_LVL 14
+#define BPT_STAGING_LVL 15
+#define BPT_PARENT0_LVL 16
 
 #define INSERT_AFTER 1
 #define INSERT_BEFORE 2
@@ -88,6 +94,7 @@ public:
             leaf_block_size (leaf_block_sz), parent_block_size (parent_block_sz),
             cache_size (cache_sz), filename (fname) {
         init_stats();
+        is_block_given = block == NULL ? 0 : 1;
         if (cache_size > 0) {
             cache = new lru_cache(leaf_block_size, cache_size, filename, 0, util::alignedAlloc);
             root_block = current_block = cache->get_disk_page_in_cache(0);
@@ -100,7 +107,6 @@ public:
                 static_cast<T*>(this)->setCurrentBlock(block);
             static_cast<T*>(this)->initCurrentBlock();
         }
-        is_block_given = block == NULL ? 0 : 1;
     }
 
     ~bplus_tree_handler() {
@@ -113,10 +119,12 @@ public:
     void initCurrentBlock() {
         //memset(current_block, '\0', BFOS_NODE_SIZE);
         //cout << "Tree init block" << endl;
-        setLeaf(1);
-        setFilledSize(0);
-        BPT_MAX_KEY_LEN = 1;
-        setKVLastPos(leaf_block_size);
+        if (!is_block_given) {
+            setLeaf(1);
+            setFilledSize(0);
+            BPT_MAX_KEY_LEN = 1;
+            setKVLastPos(leaf_block_size);
+        }
     }
 
     void init_stats() {
@@ -223,13 +231,24 @@ public:
         return util::getInt(BPT_LAST_DATA_PTR);
     }
 
-    uint8_t *allocateBlock(int size) {
+    uint8_t *allocateBlock(int size, int is_leaf, int lvl) {
+        uint8_t *new_page;
         if (cache_size > 0) {
-            uint8_t *new_page = cache->get_new_page(current_block);
-            *new_page = 0x02; // Set changed so it gets written next time
-            return new_page;
-        }
-        return (uint8_t *) util::alignedAlloc(size);
+            new_page = cache->get_new_page(current_block);
+            *new_page = 0x40; // Set changed so it gets written next time
+        } else
+            new_page = (uint8_t *) util::alignedAlloc(size);
+        if (lvl == BPT_PARENT0_LVL && cache_size > 0)
+            util::setInt(new_page + 3, parent_block_size - 8);
+        else
+            util::setInt(new_page + 3, size);
+        util::setInt(new_page + 1, 0);
+        if (is_leaf)
+            *new_page = 0xC0 + lvl;
+        else
+            *new_page = 0x40 + lvl;
+        new_page[5] = 1;
+        return new_page;
     }
 
     char *put(const char *key, uint8_t key_len, const char *value,
@@ -259,6 +278,14 @@ public:
         return NULL;
     }
 
+    void createStagingBlock(uint8_t *parent_block) {
+        uint8_t *staging_block = allocateBlock(parent_block_size, 1, BPT_STAGING_LVL);
+        int staging_page = cache->get_page_count() - 1;
+        *staging_block |= 0x20;
+        int addr_size = util::ptrToBytes(staging_page, parent_block + parent_block_size - 7);
+        parent_block[parent_block_size - 8] = addr_size;
+    }
+
     void recursiveUpdate(int16_t search_result, uint8_t *node_paths[], uint8_t level) {
         //int16_t search_result = pos; // lastSearchPos[level];
         if (search_result < 0) {
@@ -270,9 +297,13 @@ public:
                 uint8_t *old_block = current_block;
                 uint8_t *new_block = static_cast<T*>(this)->split(first_key, &first_len);
                 setChanged(1);
+                int lvl = old_block[0] & 0x1F;
+                new_block[0] = (new_block[0] & 0xE0) + lvl;
                 int new_page = 0;
                 if (cache_size > 0)
                     new_page = cache->get_page_count() - 1;
+                if (lvl == BPT_PARENT0_LVL && cache_size > 0)
+                    createStagingBlock(new_block);
                 int16_t cmp = util::compare((char *) first_key, first_len,
                         key, key_len);
                 if (cmp <= 0)
@@ -281,20 +312,29 @@ public:
                 static_cast<T*>(this)->addData(search_result);
                 //cout << "FK:" << level << ":" << first_key << endl;
                 if (root_block == old_block) {
+                    int new_lvl = old_block[0] & 0x1F;
+                    if (new_lvl == BPT_LEAF0_LVL)
+                      new_lvl = BPT_PARENT0_LVL;
+                    else if (new_lvl >= BPT_PARENT0_LVL)
+                      new_lvl++;
                     blockCountNode++;
                     int old_page = 0;
                     if (cache_size > 0) {
                         old_block = cache->get_new_page(new_block);
                         old_page = cache->get_page_count() - 1;
                         memcpy(old_block, root_block, parent_block_size);
-                        *old_block |= 0x02;
+                        *old_block |= 0x40;
                     } else
                         root_block = (uint8_t *) util::alignedAlloc(parent_block_size);
                     static_cast<T*>(this)->setCurrentBlock(root_block);
                     static_cast<T*>(this)->initCurrentBlock();
                     setLeaf(0);
                     setChanged(1);
-                    if (getKVLastPos() == leaf_block_size)
+                    root_block[0] = (root_block[0] & 0xE0) + new_lvl;
+                    if (new_lvl == BPT_PARENT0_LVL && cache_size > 0) {
+                        setKVLastPos(parent_block_size - 8);
+                        createStagingBlock(root_block);
+                    } else
                         setKVLastPos(parent_block_size);
                     uint8_t addr[9];
                     key = "";
@@ -413,21 +453,21 @@ public:
     }
 
     inline void setLeaf(char isLeaf) {
-        if (isLeaf)
-            current_block[0] |= 0x01;
-        else
-            current_block[0] &= 0xFE;
+        if (isLeaf) {
+            current_block[0] = (current_block[0] & 0x60) | BPT_LEAF0_LVL | 0x80;
+        } else
+            current_block[0] &= 0x7F;
     }
 
     inline void setChanged(char isChanged) {
         if (isChanged)
-            current_block[0] |= 0x02;
+            current_block[0] |= 0x40;
         else
-            current_block[0] &= 0xFD;
+            current_block[0] &= 0xBF;
     }
 
     inline uint8_t isChanged() {
-        return current_block[0] & 0x02;
+        return current_block[0] & 0x40;
     }
 
     inline void setKVLastPos(uint16_t val) {

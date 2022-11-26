@@ -9,8 +9,12 @@
 
 using namespace std;
 
-#define BPT_FILLED_SIZE2 current_block + 6
-#define BLK_HDR_SIZE 8
+#if BPT_9_BIT_PTR == 1
+#define BLK_HDR_SIZE 14
+#define BITMAP_POS 6
+#else
+#define BLK_HDR_SIZE 6
+#endif
 
 // CRTP see https://en.wikipedia.org/wiki/Curiously_recurring_template_pattern
 class basix : public bplus_tree_handler<basix> {
@@ -28,6 +32,14 @@ public:
 
     inline void setCurrentBlock(uint8_t *m) {
         current_block = m;
+#if BPT_9_BIT_PTR == 1
+#if BPT_INT64MAP == 1
+        bitmap = (uint64_t *) (current_block + getHeaderSize() - 8);
+#else
+        bitmap1 = (uint32_t *) (current_block + getHeaderSize() - 8);
+        bitmap2 = bitmap1 + 1;
+#endif
+#endif
     }
 
     inline int16_t searchCurrentBlock() {
@@ -66,21 +78,28 @@ public:
 
     bool isFull(int16_t search_result) {
         int16_t ptr_size = filledSize() + 1;
+    #if BPT_9_BIT_PTR == 0
+        ptr_size <<= 1;
+    #endif
         if (getKVLastPos() <= (BLK_HDR_SIZE + ptr_size + key_len + value_len + 2))
             return true;
+    #if BPT_9_BIT_PTR == 1
+        if (filledSize() > 62)
+        return true;
+    #endif
         return false;
     }
 
     uint8_t *split(uint8_t *first_key, int16_t *first_len_ptr) {
         int16_t orig_filled_size = filledSize();
-        const uint16_t BASIX_NODE_SIZE = isLeaf() ? leaf_block_size : parent_block_size;
-        uint8_t *b = allocateBlock(BASIX_NODE_SIZE);
+        uint16_t BASIX_NODE_SIZE = isLeaf() ? leaf_block_size : parent_block_size;
+        int lvl = current_block[0] & 0x1F;
+        uint8_t *b = allocateBlock(BASIX_NODE_SIZE, isLeaf(), lvl);
         basix new_block(this->leaf_block_size, this->parent_block_size, 0, NULL, b);
-        //new_block.setKVLastPos(BASIX_NODE_SIZE);
-        if (!isLeaf())
-            new_block.setLeaf(false);
         new_block.BPT_MAX_KEY_LEN = BPT_MAX_KEY_LEN;
         uint16_t kv_last_pos = getKVLastPos();
+        if (lvl == BPT_PARENT0_LVL && cache_size > 0)
+            BASIX_NODE_SIZE -= 8;
         uint16_t halfKVLen = BASIX_NODE_SIZE - kv_last_pos + 1;
         halfKVLen /= 2;
 
@@ -138,9 +157,25 @@ public:
         }
 
         {
+    #if BPT_9_BIT_PTR == 1
+    #if BPT_INT64MAP == 1
+            (*new_block.bitmap) <<= brk_idx;
+    #else
+            if (brk_idx & 0xFFE0)
+            *new_block.bitmap1 = *new_block.bitmap2 << (brk_idx - 32);
+            else {
+                *new_block.bitmap1 <<= brk_idx;
+                *new_block.bitmap1 |= (*new_block.bitmap2 >> (32 - brk_idx));
+            }
+    #endif
+    #endif
             int16_t new_size = orig_filled_size - brk_idx;
             uint8_t *block_ptrs = new_block.current_block + BLK_HDR_SIZE;
+    #if BPT_9_BIT_PTR == 1
+            memmove(block_ptrs, block_ptrs + brk_idx, new_size);
+    #else
             memmove(block_ptrs, block_ptrs + (brk_idx << 1), new_size << 1);
+    #endif
             new_block.setKVLastPos(brk_kv_pos);
             new_block.setFilledSize(new_size);
         }
