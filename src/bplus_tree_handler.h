@@ -70,7 +70,7 @@ protected:
 public:
     uint8_t *root_block;
     uint8_t *current_block;
-    const char *key;
+    uint8_t *key;
     uint8_t key_len;
     uint8_t *key_at;
     uint8_t key_at_len;

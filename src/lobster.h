@@ -1,5 +1,5 @@
-#ifndef BASIX_H
-#define BASIX_H
+#ifndef LOBSTER_H
+#define LOBSTER_H
 #ifndef ARDUINO
 #include <cstdio>
 #include <cstring>
@@ -17,13 +17,13 @@ using namespace std;
 #endif
 
 // CRTP see https://en.wikipedia.org/wiki/Curiously_recurring_template_pattern
-class basix : public bplus_tree_handler<basix> {
+class lobster : public bplus_tree_handler<lobster> {
 public:
     int16_t pos;
-    basix(uint16_t leaf_block_sz = DEFAULT_LEAF_BLOCK_SIZE,
+    lobster(uint16_t leaf_block_sz = DEFAULT_LEAF_BLOCK_SIZE,
             uint16_t parent_block_sz = DEFAULT_PARENT_BLOCK_SIZE, int cache_sz = 0,
             const char *fname = NULL, uint8_t *block = NULL) :
-        bplus_tree_handler<basix>(leaf_block_sz, parent_block_sz, cache_sz, fname, block) {
+        bplus_tree_handler<lobster>(leaf_block_sz, parent_block_sz, cache_sz, fname, block) {
     }
 
     inline void setCurrentBlockRoot() {
@@ -49,7 +49,7 @@ public:
         while (first < filled_size) {
             middle = (first + filled_size) >> 1;
             key_at = getKey(middle, &key_at_len);
-            int16_t cmp = util::compare(key_at, key_at_len, key, key_len);
+            int16_t cmp = util::compare((char *) key_at, key_at_len, key, key_len);
             if (cmp < 0)
                 first = middle + 1;
             else if (cmp > 0)
@@ -92,15 +92,15 @@ public:
 
     uint8_t *split(uint8_t *first_key, int16_t *first_len_ptr) {
         int16_t orig_filled_size = filledSize();
-        uint16_t BASIX_NODE_SIZE = isLeaf() ? leaf_block_size : parent_block_size;
+        uint16_t LOBSTER_NODE_SIZE = isLeaf() ? leaf_block_size : parent_block_size;
         int lvl = current_block[0] & 0x1F;
-        uint8_t *b = allocateBlock(BASIX_NODE_SIZE, isLeaf(), lvl);
-        basix new_block(this->leaf_block_size, this->parent_block_size, 0, NULL, b);
+        uint8_t *b = allocateBlock(LOBSTER_NODE_SIZE, isLeaf(), lvl);
+        lobster new_block(this->leaf_block_size, this->parent_block_size, 0, NULL, b);
         new_block.BPT_MAX_KEY_LEN = BPT_MAX_KEY_LEN;
         uint16_t kv_last_pos = getKVLastPos();
         if (lvl == BPT_PARENT0_LVL && cache_size > 0)
-            BASIX_NODE_SIZE -= 8;
-        uint16_t halfKVLen = BASIX_NODE_SIZE - kv_last_pos + 1;
+            LOBSTER_NODE_SIZE -= 8;
+        uint16_t halfKVLen = LOBSTER_NODE_SIZE - kv_last_pos + 1;
         halfKVLen /= 2;
 
         int16_t brk_idx = -1;
@@ -137,22 +137,22 @@ public:
                 }
             }
         }
-        //memset(current_block + BLK_HDR_SIZE, '\0', BASIX_NODE_SIZE - BLK_HDR_SIZE);
+        //memset(current_block + BLK_HDR_SIZE, '\0', LOBSTER_NODE_SIZE - BLK_HDR_SIZE);
         kv_last_pos = getKVLastPos();
         uint16_t old_blk_new_len = brk_kv_pos - kv_last_pos;
-        memcpy(current_block + BASIX_NODE_SIZE - old_blk_new_len, new_block.current_block + kv_last_pos,
+        memcpy(current_block + LOBSTER_NODE_SIZE - old_blk_new_len, new_block.current_block + kv_last_pos,
                 old_blk_new_len); // Copy back first half to old block
         //memset(new_block.current_block + kv_last_pos, '\0', old_blk_new_len);
-        int diff = (BASIX_NODE_SIZE - brk_kv_pos);
+        int diff = (LOBSTER_NODE_SIZE - brk_kv_pos);
         for (new_idx = 0; new_idx <= brk_idx; new_idx++) {
             setPtr(new_idx, new_block.getPtr(new_idx) + diff);
         } // Set index of copied first half in old block
 
         {
             int16_t old_blk_new_len = brk_kv_pos - kv_last_pos;
-            memcpy(current_block + BASIX_NODE_SIZE - old_blk_new_len,
+            memcpy(current_block + LOBSTER_NODE_SIZE - old_blk_new_len,
                     new_block.current_block + kv_last_pos, old_blk_new_len); // Copy back first half to old block
-            setKVLastPos(BASIX_NODE_SIZE - old_blk_new_len);
+            setKVLastPos(LOBSTER_NODE_SIZE - old_blk_new_len);
             setFilledSize(brk_idx);
         }
 
