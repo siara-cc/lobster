@@ -1,5 +1,5 @@
-#ifndef STAGER_H
-#define STAGER_H
+#ifndef LOGGER_H
+#define LOGGER_H
 
 #include <sys/stat.h>
 #include <iostream>
@@ -22,7 +22,7 @@
 typedef std::vector<sqlite *> cache_more;
 typedef std::vector<bloom_filter *> cache_more_bf;
 
-class stager {
+class logger {
     protected:
       basix *idx0;
       //basix *idx1;
@@ -55,7 +55,7 @@ class stager {
       long *idx_more_lookup_counts;
 
     public:
-        stager(const char *fname, size_t cache_size_mb) {
+        logger(const char *fname, size_t cache_size_mb) {
             use_bloom = true;
             char fname0[strlen(fname) + 5];
             char fname1[strlen(fname) + 5];
@@ -73,7 +73,7 @@ class stager {
             cache1_size *= 1024;
             cache_more_size = (cache_size_mb > 0xFFFFFF ? (cache_size_mb >> 24) & 0x0F : (cache_size_mb & 0xFF) / (cache_size_mb < 4 ? 2 : 4)) * 16;
             cache_more_size *= 1024;
-            idx0 = new basix3(STAGING_BLOCK_SIZE, STAGING_BLOCK_SIZE, cache0_size, fname0);
+            idx0 = new basix(STAGING_BLOCK_SIZE, STAGING_BLOCK_SIZE, cache0_size, fname0);
             //idx1 = new basix(BUCKET_BLOCK_SIZE, BUCKET_BLOCK_SIZE, cache1_size, fname1);
             idx1 = new sqlite(2, 1, "key, value", "imain", BUCKET_BLOCK_SIZE, BUCKET_BLOCK_SIZE, cache1_size, fname1);
             if (use_bloom) {
@@ -142,7 +142,7 @@ class stager {
             zero_count = cache0_page_count;
         }
 
-        ~stager() {
+        ~logger() {
             delete idx0;
             delete idx1;
             if (use_bloom) {
@@ -487,4 +487,4 @@ class stager {
         }
 
 };
-#endif // STAGER_H
+#endif // LOGGER_H
